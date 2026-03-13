@@ -6,7 +6,51 @@ import streamlit as st
 from typing import Generator
 
 
-OLLAMA_HTTP = "http://localhost:11434/api/generate"
+OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_HTTP = OLLAMA_BASE + "/api/generate"
+
+
+def get_available_models() -> list:
+    urls = [OLLAMA_BASE + "/api/tags"]
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=2)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+
+            # If it's a simple list of strings
+            if isinstance(data, list) and all(isinstance(x, str) for x in data):
+                return data
+
+            # If it's a list of dicts with names
+            if isinstance(data, list):
+                names = []
+                for item in data:
+                    if isinstance(item, dict):
+                        name = item.get("name") or item.get("model") or item.get("id")
+                        if name:
+                            names.append(name)
+                if names:
+                    return names
+
+            # If it's a dict containing a models list (e.g., {"models": [{"name": ...}, ...]})
+            if isinstance(data, dict):
+                inner = data.get("models") or data.get("results") or data.get("available")
+                if isinstance(inner, list):
+                    out = []
+                    for m in inner:
+                        if isinstance(m, str):
+                            out.append(m)
+                        elif isinstance(m, dict):
+                            name = m.get("name") or m.get("model") or m.get("id")
+                            if name:
+                                out.append(name)
+                    if out:
+                        return out
+        except Exception:
+            continue
+    return ["ollama"]
 
 
 def stream_from_ollama_http(prompt: str, model: str = "ollama") -> Generator[str, None, None]:
@@ -20,10 +64,15 @@ def stream_from_ollama_http(prompt: str, model: str = "ollama") -> Generator[str
         return
 
     for raw in resp.iter_lines(decode_unicode=True):
-        if not raw:
+        if raw is None:
             continue
         # Ollama may stream lines prefixed with 'data: '
-        line = raw
+        if isinstance(raw, bytes):
+            line = raw.decode("utf-8", errors="ignore")
+        else:
+            line = raw
+        if not line:
+            continue
         if line.startswith("data:"):
             line = line[len("data:") :].strip()
         if not line or line == "[DONE]":
@@ -82,9 +131,15 @@ def app():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    model = st.sidebar.text_input("Model", value="ollama")
+    available_models = get_available_models()
 
     with st.form(key="chat_form", clear_on_submit=True):
+        sel = st.selectbox("Available models", options=available_models + ["custom..."], index=0)
+        if sel == "custom...":
+            model = st.text_input("Custom model name", value="ollama")
+        else:
+            model = sel
+
         user_input = st.text_area("You", value="", height=100)
         submit = st.form_submit_button("Send")
 
