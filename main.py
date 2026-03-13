@@ -4,6 +4,7 @@ import subprocess
 import shlex
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from typing import Generator
 
 
@@ -175,8 +176,35 @@ def app():
     col_left, col_right = st.columns([3, 1])
     with col_left:
         with st.form(key="chat_form", clear_on_submit=True):
-            user_input = st.text_area("You", value="", height=100)
+            user_input = st.text_area("You", value="", height=30, placeholder="Type your message here...")
             submit = st.form_submit_button("Send")
+
+            components.html(
+                    """
+                    <script>
+                    (function () {
+                        const textarea = window.parent.document.querySelector('textarea[aria-label="You"]');
+                        if (!textarea || textarea.dataset.enterBound) return;
+                        textarea.dataset.enterBound = "true";
+                        textarea.addEventListener('keydown', function (e) {
+                            if (e.key === 'Enter' && e.ctrlKey) {
+                                const hasText = textarea.value && textarea.value.trim().length > 0;
+                                if (!hasText) return;
+                                e.preventDefault();
+                                const buttons = window.parent.document.querySelectorAll('button[data-testid="stFormSubmitButton"]');
+                                for (const btn of buttons) {
+                                    if (btn.textContent && btn.textContent.trim() === 'Send') {
+                                        btn.click();
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                    })();
+                    </script>
+                    """,
+                    height=0,
+            )
 
     with col_right:
         history_container = st.container()
@@ -199,17 +227,17 @@ def app():
         stats_placeholder = st.empty()
         
         if response_stats:
-            total_ms = response_stats.get("total_duration", 0) / 1_000_000
-            load_ms = response_stats.get("load_duration", 0) / 1_000_000
-            prompt_ms = response_stats.get("prompt_eval_duration", 0) / 1_000_000
-            eval_ms = response_stats.get("eval_duration", 0) / 1_000_000
+            total_s = response_stats.get("total_duration", 0) / 1_000_000_000
+            load_s = response_stats.get("load_duration", 0) / 1_000_000_000
+            prompt_s = response_stats.get("prompt_eval_duration", 0) / 1_000_000_000
+            eval_s = response_stats.get("eval_duration", 0) / 1_000_000_000
             prompt_tokens = int(response_stats.get("prompt_eval_count", 0))
             eval_tokens = int(response_stats.get("eval_count", 0))
             stats_placeholder.markdown(
-                f"⏱️ **total time:** {total_ms:.0f}ms  \n"
-                f"⏱️ **model loading time:** {load_ms:.0f}ms  \n"
-                f"⏱️ **prompt evaluation time:** {prompt_ms:.0f}ms  \n"
-                f"⏱️ **token generation time:** {eval_ms:.0f}ms  \n"
+                f"⏱️ **total time:** {total_s:.2f}s  \n"
+                f"⏱️ **model loading time:** {load_s:.2f}s  \n"
+                f"⏱️ **prompt evaluation time:** {prompt_s:.2f}s  \n"
+                f"⏱️ **token generation time:** {eval_s:.2f}s  \n"
                 f"⏱️ **input tokens:** {prompt_tokens}  \n"
                 f"⏱️ **output tokens:** {eval_tokens}"
             )
