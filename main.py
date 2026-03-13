@@ -54,10 +54,14 @@ def get_available_models() -> list:
     return ["ollama"]
 
 
-def stream_from_ollama_http(prompt: str, model: str = "ollama") -> Generator[str, None, None]:
-    payload = {"model": model, "prompt": prompt, "stream": True}
+def stream_from_ollama_http(
+    prompt: str,
+    model: str,
+    stats: dict | None = None,
+) -> Generator[str, None, None]:
+    payload = {"model": model, "prompt": prompt, "think": False, "stream": True, "keep_alive": "1m"}
     try:
-        resp = requests.post(OLLAMA_HTTP, json=payload, stream=True, timeout=5)
+        resp = requests.post(OLLAMA_HTTP, json=payload, stream=True, timeout=15)
     except Exception:
         return
 
@@ -98,11 +102,23 @@ def stream_from_ollama_http(prompt: str, model: str = "ollama") -> Generator[str
                 if "response" in obj and isinstance(obj["response"], str):
                     text = obj["response"]
 
+                if stats is not None:
+                    for key in (
+                        "total_duration",
+                        "load_duration",
+                        "prompt_eval_duration",
+                        "eval_duration",
+                        "eval_count",
+                        "prompt_eval_count",
+                    ):
+                        if key in obj and isinstance(obj[key], (int, float)):
+                            stats[key] = obj[key]
+
             if text:
                 yield text
 
 
-def stream_from_ollama_cli(prompt: str, model: str = "ollama") -> Generator[str, None, None]:
+def stream_from_ollama_cli(prompt: str, model: str) -> Generator[str, None, None]:
     # Fallback: try calling the local `ollama` CLI if available.
     cmd = ["ollama", "generate", model, "--prompt", prompt, "--stream"]
     try:
@@ -115,10 +131,10 @@ def stream_from_ollama_cli(prompt: str, model: str = "ollama") -> Generator[str,
         yield line
 
 
-def stream_response(prompt: str, model: str) -> Generator[str, None, None]:
+def stream_response(prompt: str, model: str, stats: dict | None = None) -> Generator[str, None, None]:
     # Try HTTP stream first, then CLI fallback
     yielded_any = False
-    for chunk in stream_from_ollama_http(prompt, model=model) or []:
+    for chunk in stream_from_ollama_http(prompt, model=model, stats=stats) or []:
         yielded_any = True
         yield chunk
     if yielded_any:
@@ -133,6 +149,9 @@ def app():
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
+    if "user_history" not in st.session_state:
+        st.session_state.user_history = []
 
     available_models = get_available_models()
 
@@ -153,30 +172,68 @@ def app():
     else:
         model = sel
 
-    with st.form(key="chat_form", clear_on_submit=True):
-        user_input = st.text_area("You", value="", height=100)
-        submit = st.form_submit_button("Send")
+    col_left, col_right = st.columns([3, 1])
+    with col_left:
+        with st.form(key="chat_form", clear_on_submit=True):
+            user_input = st.text_area("You", value="", height=100)
+            submit = st.form_submit_button("Send")
+
+    with col_right:
+        history_container = st.container()
 
     if submit and user_input:
         st.session_state.selected_model = model
         st.session_state.messages.append({"role": "user", "content": user_input})
+        st.session_state.user_history.append(user_input)
 
-        timer_placeholder = st.empty()
         status_placeholder = st.empty()
         user_prompt_placeholder = st.empty()
+        assistant_notice_placeholder = st.empty()
 
         user_prompt_placeholder.markdown(f"**You:** {user_input}")
         status_placeholder.markdown("⏳ Waiting for response...")
         
-        prompt = user_input
-        start_time = time.perf_counter()        
-        assistant_content = st.write_stream(stream_response(prompt, model=model))
-        elapsed = time.perf_counter() - start_time
+        prompt = user_input    
+        response_stats: dict = {}
+        assistant_content = st.write_stream(stream_response(prompt, model=model, stats=response_stats))
+        stats_placeholder = st.empty()
         
-        timer_placeholder.markdown(f"⏱️ {elapsed:.2f}s")
+        if response_stats:
+            total_ms = response_stats.get("total_duration", 0) / 1_000_000
+            load_ms = response_stats.get("load_duration", 0) / 1_000_000
+            prompt_ms = response_stats.get("prompt_eval_duration", 0) / 1_000_000
+            eval_ms = response_stats.get("eval_duration", 0) / 1_000_000
+            prompt_tokens = int(response_stats.get("prompt_eval_count", 0))
+            eval_tokens = int(response_stats.get("eval_count", 0))
+            stats_placeholder.markdown(
+                f"⏱️ **total time:** {total_ms:.0f}ms  \n"
+                f"⏱️ **model loading time:** {load_ms:.0f}ms  \n"
+                f"⏱️ **prompt evaluation time:** {prompt_ms:.0f}ms  \n"
+                f"⏱️ **token generation time:** {eval_ms:.0f}ms  \n"
+                f"⏱️ **input tokens:** {prompt_tokens}  \n"
+                f"⏱️ **output tokens:** {eval_tokens}"
+            )
+        else:
+            stats_placeholder.warning("⚠️ No timing stats available.")
+
+        if not assistant_content or not str(assistant_content).strip():
+            assistant_content = ""
+            status_placeholder.markdown("⚠️ No response from model")
+            assistant_notice_placeholder.info("The model returned no content.")
+        else:
+            status_placeholder.markdown("✅ Response complete")
 
         st.session_state.messages.append({"role": "assistant", "content": assistant_content})
-        status_placeholder.markdown("✅ Response complete")
+
+    with history_container:
+        container_title = st.empty()
+        container_title.markdown("**Historique**")
+        list_placeholder = st.empty()
+        if st.session_state.user_history:
+            items = "\n".join(f"- {item}" for item in reversed(st.session_state.user_history))
+            list_placeholder.markdown(items)
+        else:
+            list_placeholder.caption("No history yet.")
 
 
 if __name__ == "__main__":
