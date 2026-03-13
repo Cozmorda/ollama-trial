@@ -160,16 +160,19 @@ def app():
     if submit and user_input:
         st.session_state.selected_model = model
         st.session_state.messages.append({"role": "user", "content": user_input})
+
         timer_placeholder = st.empty()
         status_placeholder = st.empty()
         user_prompt_placeholder = st.empty()
-        user_prompt_placeholder.markdown(f"**You:** {user_input}")
-        start_time = time.perf_counter()
-        status_placeholder.markdown("⏳ Waiting for response...")
-        prompt = "\n".join([m["content"] for m in st.session_state.messages])
 
+        user_prompt_placeholder.markdown(f"**You:** {user_input}")
+        status_placeholder.markdown("⏳ Waiting for response...")
+        
+        prompt = user_input
+        start_time = time.perf_counter()        
         assistant_content = st.write_stream(stream_response(prompt, model=model))
         elapsed = time.perf_counter() - start_time
+        
         timer_placeholder.markdown(f"⏱️ {elapsed:.2f}s")
 
         st.session_state.messages.append({"role": "assistant", "content": assistant_content})
