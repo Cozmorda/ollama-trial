@@ -1,4 +1,5 @@
 import json
+import time
 import subprocess
 import shlex
 import requests
@@ -135,32 +136,44 @@ def app():
 
     available_models = get_available_models()
 
-    with st.form(key="chat_form", clear_on_submit=True):
-        sel = st.selectbox("Available models", options=available_models + ["custom..."], index=0)
-        if sel == "custom...":
-            model = st.text_input("Custom model name", value="ollama")
-        else:
-            model = sel
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = available_models[0] if available_models else "ollama"
 
+    options = available_models + ["custom..."]
+    if st.session_state.selected_model not in options:
+        options = [st.session_state.selected_model] + options
+
+    sel = st.selectbox(
+        "Available models",
+        options=options,
+        index=options.index(st.session_state.selected_model),
+    )
+    if sel == "custom...":
+        model = st.text_input("Custom model name", value=st.session_state.selected_model)
+    else:
+        model = sel
+
+    with st.form(key="chat_form", clear_on_submit=True):
         user_input = st.text_area("You", value="", height=100)
         submit = st.form_submit_button("Send")
 
     if submit and user_input:
+        st.session_state.selected_model = model
         st.session_state.messages.append({"role": "user", "content": user_input})
+        timer_placeholder = st.empty()
         status_placeholder = st.empty()
+        user_prompt_placeholder = st.empty()
+        user_prompt_placeholder.markdown(f"**You:** {user_input}")
+        start_time = time.perf_counter()
         status_placeholder.markdown("⏳ Waiting for response...")
         prompt = "\n".join([m["content"] for m in st.session_state.messages])
+
         assistant_content = st.write_stream(stream_response(prompt, model=model))
+        elapsed = time.perf_counter() - start_time
+        timer_placeholder.markdown(f"⏱️ {elapsed:.2f}s")
 
         st.session_state.messages.append({"role": "assistant", "content": assistant_content})
         status_placeholder.markdown("✅ Response complete")
-
-    # show history
-    for msg in st.session_state.messages:
-        if msg["role"] == "user":
-            st.markdown(f"**You:** {msg['content']}")
-        else:
-            st.markdown(f"**Assistant:** {msg['content']}")
 
 
 if __name__ == "__main__":
