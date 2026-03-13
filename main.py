@@ -254,14 +254,15 @@ def app():
         st.session_state.messages.append({"role": "assistant", "content": assistant_content})
 
     with history_container:
-        container_title = st.empty()
-        container_title.markdown("**Historique**")
-        list_placeholder = st.empty()
-        if st.session_state.user_history:
-            items = "\n".join(f"- {item}" for item in reversed(st.session_state.user_history))
-            list_placeholder.markdown(items)
-        else:
-            list_placeholder.caption("No history yet.")
+        st.markdown("**Historique**")
+        list_container = st.empty()
+        with list_container.container():
+            if st.session_state.user_history:
+                for item in reversed(st.session_state.user_history):
+                    entry = st.container()
+                    entry.markdown(item)
+            else:
+                st.caption("No history yet.")
 
 
 if __name__ == "__main__":
