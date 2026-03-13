@@ -63,6 +63,7 @@ def stream_from_ollama_http(prompt: str, model: str = "ollama") -> Generator[str
     if resp.status_code != 200:
         return
 
+    decoder = json.JSONDecoder()
     for raw in resp.iter_lines(decode_unicode=True):
         if raw is None:
             continue
@@ -77,30 +78,27 @@ def stream_from_ollama_http(prompt: str, model: str = "ollama") -> Generator[str
             line = line[len("data:") :].strip()
         if not line or line == "[DONE]":
             continue
-        try:
-            obj = json.loads(line)
-        except Exception:
-            yield line
-            continue
-        # Try to extract text from a couple of possible shapes
-        text = None
-        if isinstance(obj, dict):
-            # openai-like streaming pieces
-            choices = obj.get("choices")
-            if choices and isinstance(choices, list):
-                delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
-                if isinstance(delta, dict):
-                    text = delta.get("content") or delta.get("text")
-                else:
-                    text = choices[0].get("text")
-            # generic field
-            if not text:
-                text = obj.get("text") or obj.get("content")
-        if text:
-            yield text
-        else:
-            # last-resort: stringify
-            yield line
+
+        # Some servers send multiple JSON objects on one line. Decode in a loop.
+        buffer = line.strip()
+        while buffer:
+            try:
+                obj, idx = decoder.raw_decode(buffer)
+                buffer = buffer[idx:].lstrip()
+            except Exception:
+                # If we cannot parse, fall back to raw text
+                yield buffer
+                break
+
+            # Try to extract text from known shapes
+            text = None
+            if isinstance(obj, dict):
+                # Ollama streaming uses "response" for tokens
+                if "response" in obj and isinstance(obj["response"], str):
+                    text = obj["response"]
+
+            if text:
+                yield text
 
 
 def stream_from_ollama_cli(prompt: str, model: str = "ollama") -> Generator[str, None, None]:
@@ -116,10 +114,14 @@ def stream_from_ollama_cli(prompt: str, model: str = "ollama") -> Generator[str,
         yield line
 
 
-def stream_response(prompt: str, model: str = "ollama") -> Generator[str, None, None]:
+def stream_response(prompt: str, model: str) -> Generator[str, None, None]:
     # Try HTTP stream first, then CLI fallback
+    yielded_any = False
     for chunk in stream_from_ollama_http(prompt, model=model) or []:
+        yielded_any = True
         yield chunk
+    if yielded_any:
+        return
     for chunk in stream_from_ollama_cli(prompt, model=model) or []:
         yield chunk
 
@@ -145,14 +147,13 @@ def app():
 
     if submit and user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
-        placeholder = st.empty()
-        assistant_content = ""
+        status_placeholder = st.empty()
+        status_placeholder.markdown("⏳ Waiting for response...")
         prompt = "\n".join([m["content"] for m in st.session_state.messages])
-        for chunk in stream_response(prompt, model=model):
-            assistant_content += chunk
-            placeholder.markdown(assistant_content)
+        assistant_content = st.write_stream(stream_response(prompt, model=model))
 
         st.session_state.messages.append({"role": "assistant", "content": assistant_content})
+        status_placeholder.markdown("✅ Response complete")
 
     # show history
     for msg in st.session_state.messages:
